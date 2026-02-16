@@ -1,0 +1,13 @@
+fastapi==0.109.0
+uvicorn==0.27.0
+python-multipart==0.0.6
+langchain==0.3.15
+langchain-community==0.3.15
+chromadb==0.5.23
+sentence-transformers==3.3.1
+pypdf==4.0.0
+python-docx==1.1.0
+markdown==3.5.2
+duckduckgo-search==4.1.1
+ollama==0.4.4
+pydantic==2.10.5

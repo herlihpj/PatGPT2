@@ -1,0 +1,35 @@
+# VS Code
+.vscode/
+
+# Windows setup script
+setup.bat
+
+# Python virtual environments
+backend/.venv/
+backend/venv/
+
+.venv/
+venv/
+
+# Ignore everything inside these folders
+backend/data/chroma_db/*
+backend/uploads/*
+
+# But allow this placeholder file
+!backend/data/chroma_db/.gitkeep
+!backend/uploads/.gitkeep
+
+# Node dependencies
+frontend/node_modules/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+.env.*
+
+# OS junk
+.DS_Store
+Thumbs.db
