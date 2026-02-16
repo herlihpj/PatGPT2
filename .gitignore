@@ -3,6 +3,8 @@
 
 # Windows setup script
 setup.bat
+start-patgpt2.bat
+stop-patgpt2.bat
 
 # Python virtual environments
 backend/.venv/

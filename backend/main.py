@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import ollama
 import json
+import re
 from pathlib import Path
 
 import config
@@ -40,6 +41,31 @@ class QueryRequest(BaseModel):
 class ActionRequest(BaseModel):
     action: str
     parameters: dict
+
+
+def extract_json_action(text: str) -> Optional[dict]:
+    """Extract JSON action from text, handling various formats"""
+    # Try to find JSON in the text
+    patterns = [
+        r'\{[^}]*"action"[^}]*\}',  # Basic JSON object
+        r'```json\s*(\{[^}]*"action"[^}]*\})\s*```',  # Markdown code block
+        r'`(\{[^}]*"action"[^}]*\})`',  # Inline code
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        if match:
+            try:
+                json_str = match.group(1) if match.lastindex else match.group(0)
+                # Clean up common issues
+                json_str = json_str.strip()
+                action_data = json.loads(json_str)
+                if "action" in action_data:
+                    return action_data
+            except json.JSONDecodeError:
+                continue
+    
+    return None
 
 
 @app.get("/")
@@ -93,28 +119,39 @@ async def query_stream(request: QueryRequest):
                     context = "\n\n".join([f"Source: {doc.metadata.get('source', 'unknown')}\n{doc.page_content}" for doc in docs])
                     sources = [{"source": doc.metadata.get('source'), "content": doc.page_content[:200]} for doc in docs]
             
-            # Build prompt
+            # Build improved system prompt
             system_prompt = """You are a helpful AI assistant with access to uploaded documents and tools.
-When answering questions, use the provided context from documents when relevant.
-If you need to use a tool, respond with a JSON object in this format:
+
+When you need to use a tool, respond ONLY with a JSON object in this EXACT format (no additional text):
 {"action": "tool_name", "parameters": {"param": "value"}}
 
 Available tools:
-- web_search: Search the web for current information
-- calculator: Perform mathematical calculations  
-- get_time: Get current date and time
+1. web_search - Search the internet for current information
+   Format: {"action": "web_search", "parameters": {"query": "your search query"}}
+   Use when: User asks about current events, recent news, prices, weather, or anything requiring up-to-date information
 
-If you don't need a tool, just answer the question normally."""
+2. calculator - Perform mathematical calculations
+   Format: {"action": "calculator", "parameters": {"expression": "math expression"}}
+   Use when: User asks for calculations
+
+3. get_time - Get current date and time
+   Format: {"action": "get_time", "parameters": {}}
+   Use when: User asks about current time or date
+
+IMPORTANT: 
+- If you need to use a tool, respond with ONLY the JSON (nothing else)
+- After the tool returns results, then provide a natural language response using those results
+- If you don't need a tool, answer normally using your knowledge and provided context"""
             
             if context:
-                system_prompt += f"\n\nContext from documents:\n{context}"
+                system_prompt += f"\n\nContext from uploaded documents:\n{context}"
             
             # Add to conversation history
             messages = [{"role": "system", "content": system_prompt}]
             messages.extend(conversations[conv_id][-6:])  # Last 3 exchanges
             messages.append({"role": "user", "content": request.query})
             
-            # Stream response from Ollama
+            # Get initial response from Ollama
             response_text = ""
             stream = ollama.chat(
                 model=config.MODEL_NAME,
@@ -132,44 +169,50 @@ If you don't need a tool, just answer the question normally."""
                     response_text += content
                     yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
             
-            # Check if response is an action request
-            if response_text.strip().startswith("{") and "action" in response_text:
-                try:
-                    action_data = json.loads(response_text)
-                    if "action" in action_data and "parameters" in action_data:
-                        # Execute action
-                        action_result = action_handler.execute(
-                            action_data["action"],
-                            action_data["parameters"]
-                        )
-                        
-                        # Send action result back to LLM
-                        messages.append({"role": "assistant", "content": response_text})
-                        messages.append({"role": "user", "content": f"Tool result: {action_result}"})
-                        
-                        # Get final response
-                        final_response = ""
-                        stream = ollama.chat(
-                            model=config.MODEL_NAME,
-                            messages=messages,
-                            stream=True
-                        )
-                        
-                        for chunk in stream:
-                            if 'message' in chunk and 'content' in chunk['message']:
-                                content = chunk['message']['content']
-                                final_response += content
-                                yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
-                        
-                        response_text = final_response
-                except json.JSONDecodeError:
-                    pass
+            # Check if response contains an action request
+            action_data = extract_json_action(response_text)
             
-            # Update conversation history
-            conversations[conv_id].append({"role": "user", "content": request.query})
-            conversations[conv_id].append({"role": "assistant", "content": response_text})
+            if action_data:
+                # Execute the action
+                yield f"data: {json.dumps({'type': 'action', 'action': action_data['action']})}\n\n"
+                
+                action_result = action_handler.execute(
+                    action_data["action"],
+                    action_data.get("parameters", {})
+                )
+                
+                yield f"data: {json.dumps({'type': 'action_result', 'result': action_result[:200] + '...'})}\n\n"
+                
+                # Send results back to LLM for natural response
+                messages.append({"role": "assistant", "content": response_text})
+                messages.append({"role": "user", "content": f"Here are the results from the {action_data['action']} tool:\n\n{action_result}\n\nPlease provide a natural, helpful response based on these results. Do not use any more tools."})
+                
+                # Get final natural language response
+                final_response = ""
+                stream = ollama.chat(
+                    model=config.MODEL_NAME,
+                    messages=messages,
+                    stream=True,
+                    options={
+                        "temperature": 0.7,
+                    }
+                )
+                
+                for chunk in stream:
+                    if 'message' in chunk and 'content' in chunk['message']:
+                        content = chunk['message']['content']
+                        final_response += content
+                        yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
+                
+                # Update conversation with final response
+                conversations[conv_id].append({"role": "user", "content": request.query})
+                conversations[conv_id].append({"role": "assistant", "content": final_response})
+            else:
+                # No action needed, update conversation with direct response
+                conversations[conv_id].append({"role": "user", "content": request.query})
+                conversations[conv_id].append({"role": "assistant", "content": response_text})
             
-            # Send sources
+            # Send sources if available
             if sources:
                 yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
             
