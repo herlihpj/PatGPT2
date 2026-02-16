@@ -14,7 +14,7 @@ function App() {
   return (
     <div className="app">
       <div className="sidebar">
-        <h1>🤖 Local LLM Agent</h1>
+        <h1>🤖 PatGPT</h1>
         
         <div className="collection-section">
           <label>Collection:</label>

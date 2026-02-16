@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Dict, Any
 import json
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 class ActionHandler:
     """Handles tool/action execution for the agent"""

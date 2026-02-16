@@ -1,6 +1,10 @@
 from pathlib import Path
 from typing import List, Dict, Any
 import hashlib
+import os
+
+# Disable ChromaDB telemetry to avoid errors
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import (
@@ -9,9 +13,21 @@ from langchain_community.document_loaders import (
     Docx2txtLoader,
     UnstructuredMarkdownLoader
 )
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain.schema import Document
+
+# Use new import paths to avoid deprecation warnings
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    # Fallback to old import if new package not installed
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+
+try:
+    from langchain_chroma import Chroma
+except ImportError:
+    # Fallback to old import if new package not installed
+    from langchain_community.vectorstores import Chroma
+
+from langchain_core.documents import Document
 
 import config
 
